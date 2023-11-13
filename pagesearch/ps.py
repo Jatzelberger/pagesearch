@@ -35,9 +35,11 @@ class PageSearch:
         self.__recursive: bool = recursive
         self.__config: Path = config
 
-        self.__excluded = []  # excluded from search
-        self.__included = []  # file extensions to copy
-        self.__modify_extension = ''  # Modify file name in xml file
+        self.__xml_config = ''
+        self.__copy_config = []
+        self.__xml_update = ''
+        self.__ex_files = []
+        self.__ex_folders = []
         self.__load_config()
 
         self.files: list[Path] = []
@@ -51,11 +53,14 @@ class PageSearch:
         """
         cfg = configparser.ConfigParser(converters={
             'list': lambda x: [i.strip() for i in x.splitlines() if i != ''],
+            'map': lambda x: [i.replace(' ', '').split('>') for i in x.splitlines() if i != ''],
         })
         cfg.read(DEFAULT_CONFIG.as_posix())
-        self.__excluded = cfg.getlist('Blacklist', 'excluded')
-        self.__included = cfg.getlist('Whitelist', 'copy')
-        self.__modify_extension = cfg.get('Whitelist', 'modify_extension')
+        self.__xml_config = cfg.get('EXTENSIONS', 'xml')
+        self.__copy_config = cfg.getmap('EXTENSIONS', 'copy')
+        self.__xml_update = cfg.get('EXTENSIONS', 'xml_update')
+        self.__ex_files = cfg.getlist('EXCLUDED', 'files')
+        self.__ex_folders = cfg.getlist('EXCLUDED', 'folders')
 
     def __load_files(self) -> None:
         """
@@ -63,8 +68,9 @@ class PageSearch:
 
         :return: None
         """
-        self.files = glob(self.__input_dir.joinpath('**', '*.xml').as_posix(), recursive=self.__recursive)
-        self.files = list(filter(lambda p: Path(p).name not in self.__excluded, self.files))  # apply blacklist
+        self.files = glob(self.__input_dir.joinpath('**', f'*{self.__xml_config}').as_posix(), recursive=self.__recursive)
+        self.files = list(filter(lambda p: Path(p).name not in self.__ex_files, self.files))  # remove excluded files
+        self.files = list(filter(lambda p: not any(folder in Path(p).relative_to(self.__input_dir).as_posix() for folder in self.__ex_folders), self.files))  # remove excluded folders
         self.files.sort()
 
     def __parse_search(self, fp: Path) -> list[str]:
@@ -103,42 +109,7 @@ class PageSearch:
         for key, val in results.items():
             print(key)
             for hits in val:
-                print(f'\tFound {hits["search"]} in line {hits["line_number"]}: "{hits["line_text"]}"')
-
-    def __copy_results(self, results: dict) -> Path:
-        """
-        Copy and rename files specified in config.cfg to output folder and creates results.csv in output folder
-
-        :param results: results dictionary from search method
-        :return: path to results.csv file
-        """
-        if not self.__output_dir.exists():
-            os.mkdir(self.__output_dir)
-
-        csv_content = []
-        file_counter = 1
-        for key, val in results.items():
-            f_path = Path(key)
-            f_name = f_path.name.replace('.xml', '')
-            for extension in self.__included:
-                orig = f_path.parent.joinpath(f_name + extension)
-                new = self.__output_dir.joinpath(f'{file_counter:05d}{extension}')
-                shutil.copy(orig, new)
-                if self.__modify_extension.strip() and '.xml' in extension:
-                    self.__fix_xml(new, f'{file_counter:05d}{self.__modify_extension}')
-            for appearance in val:
-                csv_content.append(
-                    [
-                        appearance['search'],
-                        f'{file_counter:05d}',
-                        appearance['line_number'],
-                        appearance['line_text'],
-                        f_path.parent.relative_to(self.__input_dir).joinpath(f_name).as_posix()
-                    ]
-                )
-            file_counter += 1
-        csv_file = self.__write_csv(csv_content)
-        return csv_file
+                print(f'\tFound {hits["search"]} in line {hits["line"]}: "{hits["text"]}"')
 
     def __write_csv(self, content: list[list]) -> Path:
         """
@@ -172,6 +143,44 @@ class PageSearch:
                 outfile.write(etree.tostring(root, encoding="unicode", pretty_print=True))
         except Exception as e:
             print(e)
+
+    def __copy_results(self, results: dict) -> Path:
+        """
+        Copy and rename files specified in config.cfg to output folder and creates results.csv in output folder
+
+        :param results: results dictionary from search method
+        :return: path to results.csv file
+        """
+        if not self.__output_dir.exists():
+            os.mkdir(self.__output_dir)
+
+        csv_content = []
+        fc = 1  # file counter
+        for path, hits in results.items():
+            orig_xml_path = Path(path)
+            orig_name = orig_xml_path.name.replace(self.__xml_config, '')  # removes xml file extension
+            for ext_index in range(len(self.__copy_config)):
+                # generate paths and filenames
+                orig_path = orig_xml_path.parent.joinpath(f'{orig_name}{self.__copy_config[ext_index][0]}')
+                new_path = self.__output_dir.joinpath(f'{fc:05d}{self.__copy_config[ext_index][1]}')
+                if orig_path.exists():
+                    shutil.copy(orig_path, new_path)
+                    # update xml if needed
+                    if self.__copy_config[ext_index][0] == self.__xml_config and self.__xml_update:
+                        self.__fix_xml(new_path, f'{fc:05d}{self.__xml_update}')
+                else:
+                    print('FileNotFound (skip):', orig_path.as_posix())
+            # prepare data for csv file
+            for hit in hits:
+                csv_content.append([
+                    hit['search'],
+                    f'{fc:05d}',
+                    hit['line'],
+                    hit['text'],
+                    orig_xml_path.parent.relative_to(self.__input_dir).joinpath(orig_name).as_posix()
+                ])
+            fc += 1
+        return self.__write_csv(csv_content)
 
     def search(self, search_fp: Path, console: bool = False) -> None:
         """
@@ -209,17 +218,18 @@ class PageSearch:
                         if fp not in result:
                             result[fp] = []
                         result[fp].append({
-                            'line_number': line_counter,
-                            'line_text': line_text,
+                            'line': line_counter,
+                            'text': line_text,
                             'search': s,
                         })
                 line_counter += 1
+
         if result:
             if console:
                 self.__print_results(result)
             else:
                 csv_file = self.__copy_results(result)
-                print(f'Done! ({csv_file})')  # TODO: add statistics
+                print(f'Done! ({csv_file})')
         else:
             print('Nothing found!')
             return
