@@ -55,6 +55,7 @@ Output example (for each found query):
 ```csv
 search,out_file,line,text,original_file
 ,00001,24,Ir getruwet deſter wur ir man,eval/eval/b_welscher-2/pages/rem/0053
+...
 ```
 
 ## ZPD
