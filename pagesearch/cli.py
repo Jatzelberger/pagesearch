@@ -1,7 +1,6 @@
 from pagesearch import PageSearch
 from pathlib import Path
 
-
 cli_doc = """PageSearch Command Line Tool
 
 Usage:
@@ -9,21 +8,24 @@ Usage:
     pagesearch.py (-v | --version)
     pagesearch.py (-c | --console) [-r | --recursive] SEARCH INPUT [CONFIG]
     pagesearch.py [-r | --recursive] SEARCH INPUT OUTPUT [CONFIG]
-    
+
 Arguments:
     SEARCH              Search text file
     INPUT               Input directory path
     OUTPUT              Output directory path
     CONFIG              Custom config file                       
-    
+
 Options:
     -h --help           Show this screen.
     -v --version        Show version.
     -c --console        Print output on console without file copy
     -r --recursive      Recursive search in input directory
-    
-Github:
+
+GitHub:
     https://github.com/Jatzelberger/pagesearch
+
+ZPD:
+    Developed at Zentrum für Philologie und Digitalität at the Julius-Maximilians-Universität of Würzburg.
 """
 
 

@@ -1,16 +1,16 @@
 import csv
 import os
-import bs4
 import shutil
 import configparser
-
 from glob import glob
-from lxml import etree
 from pathlib import Path
+
+import bs4
+from lxml import etree
 
 
 DEFAULT_CONFIG = Path("./pagesearch/config.cfg")
-CSV_HEADER = ['search', 'file', 'line', 'text', 'original']
+CSV_HEADER = ['search', 'out_file', 'line', 'text', 'original_file']
 CSV_FILE = 'results.csv'
 
 
@@ -68,9 +68,12 @@ class PageSearch:
 
         :return: None
         """
-        self.files = glob(self.__input_dir.joinpath('**', f'*{self.__xml_config}').as_posix(), recursive=self.__recursive)
+        self.files = glob(self.__input_dir.joinpath('**', f'*{self.__xml_config}').as_posix(),
+                          recursive=self.__recursive)
         self.files = list(filter(lambda p: Path(p).name not in self.__ex_files, self.files))  # remove excluded files
-        self.files = list(filter(lambda p: not any(folder in Path(p).relative_to(self.__input_dir).as_posix() for folder in self.__ex_folders), self.files))  # remove excluded folders
+        self.files = list(filter(lambda p: not any(
+            folder in Path(p).relative_to(self.__input_dir).as_posix() for folder in self.__ex_folders),
+                                 self.files))  # remove excluded folders
         self.files.sort()
 
     def __parse_search(self, fp: Path) -> list[str]:
@@ -91,13 +94,23 @@ class PageSearch:
         :param text_line:
         :return:
         """
-        equiv = text_line.find('TextEquiv', recursive=False)
-        if equiv is None:
+        equiv = text_line.find_all('TextEquiv', recursive=False)
+        if not equiv:
             return ''
-        line = equiv.find('Unicode')
-        if line is None:
-            return ''
-        return line.text
+        for index_line in equiv:
+            if not 'index' in index_line:
+                line = index_line.find('Unicode')
+                if line is None:
+                    return ''
+                return line.text
+            else:
+                if index_line['index'] == 0:
+                    line = index_line.find('Unicode')
+                    if line is None:
+                        return ''
+                    return line.text
+        return ''
+
 
     def __print_results(self, results: dict) -> None:
         """
@@ -169,13 +182,14 @@ class PageSearch:
                     if self.__copy_config[ext_index][0] == self.__xml_config and self.__xml_update:
                         self.__fix_xml(new_path, f'{fc:05d}{self.__xml_update}')
                 else:
-                    print('FileNotFound (skip):', orig_path.as_posix())
+                    print('FileNotFound (skip):', orig_path.as_posix(), '>', new_path.as_posix())
             # prepare data for csv file
             for hit in hits:
                 csv_content.append([
                     hit['search'],
                     f'{fc:05d}',
                     hit['line'],
+                    # hit['region'],
                     hit['text'],
                     orig_xml_path.parent.relative_to(self.__input_dir).joinpath(orig_name).as_posix()
                 ])
@@ -202,27 +216,29 @@ class PageSearch:
             return
 
         result: dict = {}  # key: file path, value: list of found data
-
         for fp in self.files:
             with open(fp, 'r', encoding='utf-8') as f:
                 stream = f.read()
                 bs = bs4.BeautifulSoup(stream, 'xml')
-
-            line_counter = 1
-            for iter_line in bs.find_all('TextLine'):
-                line_text = self.__get_line_text(iter_line)
-                if line_text == '':
-                    continue  # filter empty lines
-                for s in search:
-                    if s in line_text:
-                        if fp not in result:
-                            result[fp] = []
-                        result[fp].append({
-                            'line': line_counter,
-                            'text': line_text,
-                            'search': s,
-                        })
-                line_counter += 1
+            for iter_area in bs.find_all('TextRegion'):
+                line_counter = 0  # count lines in file
+                for iter_line in iter_area.find_all('TextLine'):
+                    # line_id = iter_line['id'].replace('l', '')
+                    line_text = self.__get_line_text(iter_line)
+                    if line_text == '':  # filter empty lines
+                        continue
+                    for s in search:
+                        # check for any search symbol in line
+                        if s in line_text:
+                            if fp not in result:
+                                result[fp] = []
+                            result[fp].append({
+                                'line': line_counter,
+                                'region': iter_area['id'].replace('r', ''),
+                                'text': line_text,
+                                'search': s,
+                            })
+                    line_counter += 1
 
         if result:
             if console:
